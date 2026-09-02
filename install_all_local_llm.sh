@@ -67,14 +67,14 @@ echo -e "  • ${BLUE}VRAM${NC}: ${VRAM_GB} GB (가속 모드: ${PURPLE}${GPU_TY
 # 1-3. 하드웨어 티어(Tier) 판별
 if [ "$VRAM_GB" -ge 14 ]; then
     HW_TIER=1
-    TIER_DESC="High-End (16GB+ VRAM) -> 14B/32B 모델 & 16K 컨텍스트"
-    RECOMMENDED_MAIN="qwen2.5-uncensored"
+    TIER_DESC="High-End (16GB+ VRAM) -> [주모델: Qwen 3.8 27B] & 16K 컨텍스트"
+    RECOMMENDED_MAIN="qwen3.8:27b"
     RECOMMENDED_AGENT="qwen3.8:27b"
     RECOMMENDED_REASONING="qwq:32b"
     NUM_CTX=16384
 elif [ "$VRAM_GB" -ge 7 ]; then
     HW_TIER=2
-    TIER_DESC="Mid-Range (8GB~12GB VRAM) -> 7B/14B 모델 & 8K 컨텍스트"
+    TIER_DESC="Mid-Range (8GB~12GB VRAM) -> [주모델: Qwen 2.5 7B/14B] & 8K 컨텍스트"
     RECOMMENDED_MAIN="qwen2.5:7b"
     RECOMMENDED_AGENT="qwen2.5:14b"
     RECOMMENDED_REASONING="deepseek-r1:8b"
@@ -156,9 +156,13 @@ mkdir -p "$MODEL_DIR"
 cd "$MODEL_DIR"
 
 if [ "$HW_TIER" -eq 1 ]; then
+    echo -e "  • ${GREEN}[주모델] Qwen 3.8 27B 모델 풀링 중 (최우선 메인 엔진)...${NC}"
+    ollama pull qwen3.8:27b 2>/dev/null || ollama pull qwen2.5:32b 2>/dev/null || true
+    ollama pull qwq:32b 2>/dev/null || true
+
     GGUF_FILE="$MODEL_DIR/Qwen2.5-14B-Instruct-abliterated-v2.Q4_K_M.gguf"
     if [ ! -f "$GGUF_FILE" ]; then
-        echo -e "  • Qwen 2.5 14B Uncensored 모델 다운로드 중 (약 8.98GB)..."
+        echo -e "  • [보조 모델] Qwen 2.5 14B Uncensored 다운로드 중 (약 8.98GB)..."
         curl -L --progress-bar -o "$GGUF_FILE" "https://huggingface.co/mradermacher/Qwen2.5-14B-Instruct-abliterated-v2-GGUF/resolve/main/Qwen2.5-14B-Instruct-abliterated-v2.Q4_K_M.gguf"
     fi
 
@@ -178,8 +182,6 @@ PARAMETER repeat_penalty 1.15
 PARAMETER num_ctx $NUM_CTX
 EOF
     ollama create qwen2.5-uncensored -f Modelfile.custom
-    ollama pull qwen3.8:27b 2>/dev/null || ollama pull qwen2.5:32b 2>/dev/null || true
-    ollama pull qwq:32b 2>/dev/null || true
 
 elif [ "$HW_TIER" -eq 2 ]; then
     echo -e "  • 8GB~12GB VRAM 최적화 모델 풀링 중 (Qwen 2.5 7B / 14B)..."

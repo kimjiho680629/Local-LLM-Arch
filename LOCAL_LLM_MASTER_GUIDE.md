@@ -22,9 +22,9 @@
 
 | 하드웨어 티어 | VRAM 사양 기준 | 적용 모델 구성 | 컨텍스트 (`num_ctx`) | 대표 지원 GPU 예시 |
 | :--- | :--- | :--- | :--- | :--- |
-| **Tier 1 (High-End)** | **14GB 이상** | • 메인: `Qwen 2.5 14B (Uncensored)`<br>• 에이전트: `Qwen 3.8 27B` / `32B`<br>• 추론: `QwQ 32B` | **16384 (16K)** | RTX 4090, 5090, 5070 Ti, 4080, RX 7900 XTX (16GB~32GB) |
-| **Tier 2 (Mid-Range)** | **7GB ~ 13GB** | • 메인: `Qwen 2.5 7B / 8B`<br>• 에이전트: `Qwen 2.5 14B`<br>• 추론: `DeepSeek-R1 8B` | **8192 (8K)** | RTX 4060 Ti, 3060, 4070, RX 7600 XT, 6700 XT (8GB~12GB) |
-| **Tier 3 (Entry / CPU)** | **7GB 미만 / CPU** | • 메인: `Qwen 2.5 3B`<br>• 에이전트: `Qwen 2.5 7B`<br>• 추론: `DeepSeek-R1 7B` | **4096 (4K)** | GTX 1660, RTX 3050, 내장 그래픽, 순수 CPU 전용 PC |
+| **Tier 1 (High-End)** | **14GB 이상** | • **[주모델] `Qwen 3.8 27B`** (최고 지능 메인 엔진)<br>• 에이전트/코딩: `Qwen 2.5 32B`<br>• 보조 무검열: `Qwen 2.5 14B (Uncensored)`<br>• 심층 추론: `QwQ 32B` | **16384 (16K)** | RTX 5070 Ti, 4090, 5090, 4080, RX 7900 XTX (16GB~32GB) |
+| **Tier 2 (Mid-Range)** | **7GB ~ 13GB** | • **[주모델] `Qwen 2.5 7B`**<br>• 에이전트: `Qwen 2.5 14B`<br>• 심층 추론: `DeepSeek-R1 8B` | **8192 (8K)** | RTX 4060 Ti, 3060, 4070, RX 7600 XT, 6700 XT (8GB~12GB) |
+| **Tier 3 (Entry / CPU)** | **7GB 미만 / CPU** | • **[주모델] `Qwen 2.5 3B`**<br>• 에이전트: `Qwen 2.5 7B`<br>• 심층 추론: `DeepSeek-R1 7B` | **4096 (4K)** | GTX 1660, RTX 3050, 내장 그래픽, 순수 CPU 전용 PC |
 
 ```
                               [사용자 터미널 질의]
