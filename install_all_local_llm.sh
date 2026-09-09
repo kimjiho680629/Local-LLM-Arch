@@ -309,7 +309,6 @@ def clear_session_history():
 
 def tool_bash(command: str) -> str:
     """리눅스 셸 명령어를 실행하고 결과를 반환합니다."""
-    # 위험 명령어 사전 차단
     dangerous = ["rm -rf /", "mkfs", "dd if=", ":(){ :|:& };:"]
     for d in dangerous:
         if d in command:
@@ -328,8 +327,7 @@ def tool_bash(command: str) -> str:
         err = res.stderr.strip()
         result = out if out else ""
         if err:
-            result += f"
-[stderr]: {err}"
+            result += f"\n[stderr]: {err}"
 
         if not result:
             return "(출력 없음, 정상 실행됨)"
@@ -339,11 +337,7 @@ def tool_bash(command: str) -> str:
         if len(result) > max_len:
             head_len = 1000
             tail_len = 2500
-            result = f"{result[:head_len]}
-
-... [중략: 총 {len(result)}자 중 {len(result) - head_len - tail_len}자 생략됨] ...
-
-{result[-tail_len:]}"
+            result = f"{result[:head_len]}\n\n... [중략: 총 {len(result)}자 중 {len(result) - head_len - tail_len}자 생략됨] ...\n\n{result[-tail_len:]}"
 
         return result
     except subprocess.TimeoutExpired:
@@ -368,7 +362,7 @@ def tool_web_search(query: str):
     now_str, current_year = get_current_time_context()
 
     # 모델이 학습 컷오프(2024~2025년) 관성으로 인해 과거 연도(2024, 2025)로 검색하는 경우 현재 연도(2026)로 스마트 자동 보정
-    refined_query = re.sub(r'202[45]', current_year, query)
+    refined_query = re.sub(r' 202[45] ', current_year, query)
 
     results = []
     # 1. Google HTTP 파서
@@ -405,8 +399,7 @@ def tool_web_search(query: str):
         except Exception:
             pass
 
-    content = "
-".join(results) if results else "검색 결과 없음"
+    content = "\n".join(results) if results else "검색 결과 없음"
     return content, refined_query
 
 # ==============================================================================
@@ -473,7 +466,7 @@ def get_system_hardware_info() -> str:
 
     # 2. CPU
     try:
-        cpu = subprocess.check_output("lscpu 2>/dev/null | grep 'Model name:' | sed 's/Model name:[ 	]*//'", shell=True, text=True).strip()
+        cpu = subprocess.check_output("lscpu 2>/dev/null | grep 'Model name:' | sed 's/Model name:[ \t]*//'", shell=True, text=True).strip()
         if not cpu:
             cpu = subprocess.check_output("grep -m1 'model name' /proc/cpuinfo | cut -d: -f2", shell=True, text=True).strip()
         if cpu:
@@ -487,8 +480,7 @@ def get_system_hardware_info() -> str:
         nv_out = subprocess.run("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null", shell=True, stdout=subprocess.PIPE, text=True)
         if nv_out.returncode == 0 and nv_out.stdout.strip():
             g_list = []
-            for g in nv_out.stdout.strip().split("
-"):
+            for g in nv_out.stdout.strip().split("\n"):
                 parts = [p.strip() for p in g.split(",")]
                 if len(parts) >= 2:
                     vram_gb = round(float(parts[1]) / 1024, 1)
@@ -498,8 +490,7 @@ def get_system_hardware_info() -> str:
         if not gpu_info:
             lspci_out = subprocess.check_output("lspci 2>/dev/null | grep -iE 'vga|3d|display' | cut -d: -f3", shell=True, text=True).strip()
             if lspci_out:
-                gpu_info = lspci_out.replace("
-", ", ")
+                gpu_info = lspci_out.replace("\n", ", ")
         
         if gpu_info:
             info_lines.append(f"- GPU: {gpu_info.strip()}")
@@ -508,16 +499,14 @@ def get_system_hardware_info() -> str:
     except Exception:
         pass
 
-    return "
-".join(info_lines)
+    return "\n".join(info_lines)
 
 def get_optimal_context_size() -> int:
     """GPU VRAM 용량에 맞춰 최적의 num_ctx(컨텍스트 윈도우)를 자동 산출합니다."""
     try:
         nv_out = subprocess.run("nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null", shell=True, stdout=subprocess.PIPE, text=True)
         if nv_out.returncode == 0 and nv_out.stdout.strip():
-            vram_mb = float(nv_out.stdout.strip().split("
-")[0])
+            vram_mb = float(nv_out.stdout.strip().split("\n")[0])
             if vram_mb >= 14000:  # 16GB+ VRAM
                 return 16384
             elif vram_mb >= 7500: # 8GB~12GB VRAM
@@ -564,13 +553,12 @@ def run_agent_turn(client, model, messages):
                 tools=tools,
                 options={
                     'temperature': 0.3,
-                    'num_ctx': ctx_size  # 하드웨어 사양에 맞춰 동적으로 계산된 컨텍스트 크기 적용
+                    'num_ctx': ctx_size
                 },
                 keep_alive=0
             )
         except Exception as e:
-            return f"❌ [Ollama 응답 처리 오류]: {e}
-(도구 실행 결과량이 너무 많거나 모델 템플릿에서 오류가 발생했습니다.)"
+            return f"❌ [Ollama 응답 처리 오류]: {e}\n(도구 실행 결과량이 너무 많거나 모델 템플릿에서 오류가 발생했습니다.)"
 
         message = response['message']
         messages.append(message)
@@ -584,25 +572,25 @@ def run_agent_turn(client, model, messages):
             fn_name = tool_call['function']['name']
             fn_args = tool_call['function']['arguments']
 
-            print(f"[0;35m⚡ [자율 에이전트 도구 실행][0m: {fn_name}")
+            print(f"\033[0;35m⚡ [자율 에이전트 도구 실행]\033[0m: {fn_name}")
             
             tool_output = ""
             if fn_name == 'run_terminal_command':
                 cmd = fn_args.get('command', '')
-                print(f"  [0;34m$ {cmd}[0m")
+                print(f"   \033[0;34m$ {cmd}\033[0m")
                 tool_output = tool_bash(cmd)
                 # 실행 결과 미리보기 (일부 축약)
                 preview = tool_output[:200] + "..." if len(tool_output) > 200 else tool_output
-                print(f"  [0;32m↳ 결과 수집 완료 ({len(tool_output)}자)[0m")
+                print(f"   \033[0;32m↳ 결과 수집 완료 ({len(tool_output)}자)\033[0m")
             
             elif fn_name == 'search_the_web':
                 query = fn_args.get('query', '')
                 tool_output, refined_query = tool_web_search(query)
                 if refined_query != query:
-                    print(f"  [0;34m🔍 구글 검색: {query} ➔ {refined_query} (기준 연도 {current_year}년 자동 보정)[0m")
+                    print(f"   \033[0;34m🔍 구글 검색: {query} ➔ {refined_query} (기준 연도 {current_year}년 자동 보정)\033[0m")
                 else:
-                    print(f"  [0;34m🔍 구글 검색: {query} (기준 연도 {current_year}년)[0m")
-                print(f"  [0;32m↳ 웹 검색 완료[0m")
+                    print(f"   \033[0;34m🔍 구글 검색: {query} (기준 연도 {current_year}년)\033[0m")
+                print(f"   \033[0;32m↳ 웹 검색 완료\033[0m")
 
             # 도구 실행 결과를 대화 문맥에 추가
             messages.append({
@@ -646,7 +634,7 @@ def main():
         # 기억 초기화 명령어 지원
         if user_prompt.lower() in ["clear", "reset", "/clear", "/reset", "초기화", "기억삭제"]:
             clear_session_history()
-            print("[0;32m🧹 [대화 기억 초기화 완료][0m 이전 세션 대화 기록이 모두 삭제되었습니다.")
+            print("\033[0;32m🧹 [대화 기억 초기화 완료]\033[0m 이전 세션 대화 기록이 모두 삭제되었습니다.")
             return
 
         saved_history = load_session_history()
@@ -654,63 +642,54 @@ def main():
         
         if saved_history:
             turns = len(saved_history) // 2
-            print(f"[0;35m🧠 [이전 대화 기억 {turns}개 연속 유지 중][0m [0;33m(기억 초기화: ai clear)[0m")
+            print(f"\033[0;35m🧠 [이전 대화 기억 {turns}개 연속 유지 중]\033[0m \033[0;33m(기억 초기화: ai clear)\033[0m")
             messages.extend(saved_history)
 
         messages.append({'role': 'user', 'content': user_prompt})
-        print(f"[0;36m🤖 [자율형 에이전트 가동 (모델: {target_model})][0m")
-        print(f"👤 사용자 요청: {user_prompt}
-")
+        print(f"\033[0;36m🤖 [자율형 에이전트 가동 (모델: {target_model})]\033[0m")
+        print(f"👤 사용자 요청: {user_prompt}\n")
         answer = run_agent_turn(client, target_model, messages)
-        print(f"
-[0;32m🤖 [최종 답변]:[0m
-{answer}")
+        print(f"\n\033[0;32m🤖 [최종 답변]:\033[0m\n{answer}")
 
         # 이번 턴의 응답을 세션에 누적 저장
         save_session_history(messages)
         return
 
     # 2. 대화형 인터랙티브 REPL 모드
-    print(f"[0;36m====================================================[0m")
-    print(f"[0;32m  🚀 완전 자율형 로컬 AI 에이전트 (ai) 시작  [0m")
-    print(f"[0;33m  (PC 제어, 하드웨어 점검, 웹 검색, 코딩을 스스로 수행합니다)[0m")
-    print(f"[0;36m  종료: /bye 또는 exit | 초기화: /clear[0m")
-    print(f"[0;36m====================================================[0m
-")
+    print(f"\033[0;36m====================================================\033[0m")
+    print(f"\033[0;32m  🚀 완전 자율형 로컬 AI 에이전트 (ai) 시작   \033[0m")
+    print(f"\033[0;33m  (PC 제어, 하드웨어 점검, 웹 검색, 코딩을 스스로 수행합니다)\033[0m")
+    print(f"\033[0;36m  종료: /bye 또는 exit | 초기화: /clear\033[0m")
+    print(f"\033[0;36m====================================================\033[0m\n")
 
     saved_history = load_session_history()
     history = [{'role': 'system', 'content': system_prompt}]
     if saved_history:
         history.extend(saved_history)
         turns = len(saved_history) // 2
-        print(f"[0;35m🧠 [이전 세션 대화 기억 {turns}개 불러옴] (초기화: /clear)[0m
-")
+        print(f"\033[0;35m🧠 [이전 세션 대화 기억 {turns}개 불러옴] (초기화: /clear)\033[0m\n")
 
     while True:
         try:
-            user_input = input("[1;34mAI >>> [0m").strip()
+            user_input = input("\033[1;34mAI >>> \033[0m").strip()
             if not user_input:
                 continue
             if user_input in ['/bye', 'exit', 'quit']:
-                print("[0;33m자율형 에이전트를 종료합니다.[0m")
+                print("\033[0;33m자율형 에이전트를 종료합니다.\033[0m")
                 break
             if user_input in ['/clear', 'clear']:
                 clear_session_history()
                 history = [{'role': 'system', 'content': system_prompt}]
-                print("[0;32m대화 기억이 초기화되었습니다.[0m")
+                print("\033[0;32m대화 기억이 초기화되었습니다.\033[0m")
                 continue
 
             history.append({'role': 'user', 'content': user_input})
             answer = run_agent_turn(client, target_model, history)
-            print(f"
-[0;32m🤖 [답변]:[0m
-{answer}
-")
+            print(f"\n\033[0;32m🤖 [답변]:\033[0m\n{answer}\n")
             save_session_history(history)
 
         except (KeyboardInterrupt, EOFError):
-            print("
-[0;33m자율형 에이전트를 종료합니다.[0m")
+            print("\n\033[0;33m자율형 에이전트를 종료합니다.\033[0m")
             break
 
 if __name__ == '__main__':
@@ -780,6 +759,7 @@ import json
 import urllib.request
 import urllib.parse
 import re
+import subprocess
 import ollama
 
 def search_google(query, max_results=4):
@@ -868,50 +848,38 @@ def get_current_time_context():
 
 def main():
     if len(sys.argv) < 2:
-        print("[0;33m사용법: askweb \"검색할 질문 내용을 입력하세요\"[0m")
+        print("\033[0;33m사용법: askweb \"검색할 질문 내용을 입력하세요\"\033[0m")
         sys.exit(1)
 
     now_str, current_year = get_current_time_context()
     raw_query = " ".join(sys.argv[1:])
 
     # 과거 연도(2024, 2025) 질의를 현재 연도(2026)로 자동 보정
-    query = re.sub(r'202[45]', current_year, raw_query)
+    query = re.sub(r' 202[45] ', current_year, raw_query)
 
     if query != raw_query:
-        print(f"[0;34m🔍 [Google 실시간 검색 중...][0m: {raw_query} ➔ {query} (기준 연도 {current_year}년 자동 보정)")
+        print(f"\033[0;34m🔍 [Google 실시간 검색 중...]\033[0m: {raw_query} ➔ {query} (기준 연도 {current_year}년 자동 보정)")
     else:
-        print(f"[0;34m🔍 [Google 실시간 검색 중...][0m: {query} (기준 연도: {current_year}년)")
+        print(f"\033[0;34m🔍 [Google 실시간 검색 중...]\033[0m: {query} (기준 연도: {current_year}년)")
 
     search_results, engine_name = search_google(query, max_results=4)
 
     results_text = ""
     if search_results:
-        print(f"[0;32m✓ {engine_name} 검색 완료 ({len(search_results)}개 최신 정보 수집)[0m
-")
+        print(f"\033[0;32m✓ {engine_name} 검색 완료 ({len(search_results)}개 최신 정보 수집)\033[0m\n")
         for i, r in enumerate(search_results):
             body_text = f" - {r['body']}" if r['body'] else ""
-            results_text += f"
-[검색 정보 {i+1}]
-제목: {r['title']}{body_text}
-"
+            results_text += f"\n[검색 정보 {i+1}]\n제목: {r['title']}{body_text}\n"
     else:
-        print("[0;33m⚠️ 실시간 웹 검색 결과를 가져오지 못하여 로컬 내장 지식으로 답변합니다.[0m
-")
+        print("\033[0;33m⚠️ 실시간 웹 검색 결과를 가져오지 못하여 로컬 내장 지식으로 답변합니다.\033[0m\n")
 
     system_prompt = (
-        f"당신은 Google 실시간 최신 웹 검색 정보를 기반으로 사용자의 질문에 정확하고 상세히 답변하는 전문 AI 비서입니다.
-
-"
-        f"[실시간 현재 일시 및 시간 기준 절대 원칙]
-"
-        f"- 현재 실제 일시: {now_str} (기준 연도: {current_year}년)
-"
-        f"- 사전 학습 데이터 마감(2024~2025년)과 상관없이, 현재 현실 세계의 실제 연도는 {current_year}년입니다.
-"
-        f"- 사용자가 '올해', '최근', '최신 동향', '뉴스', '현재 상황' 등을 질문하거나 정보를 요약할 때 절대 과거(2024년, 2025년)를 현재로 착각하지 말고 반드시 {current_year}년을 기준으로 사고하고 답변하세요.
-"
-        f"- 제공된 웹 검색 결과를 최우선으로 분석하여 한국어로 알기 쉽게 정리해 주세요.
-"
+        f"당신은 Google 실시간 최신 웹 검색 정보를 기반으로 사용자의 질문에 정확하고 상세히 답변하는 전문 AI 비서입니다.\n\n"
+        f"[실시간 현재 일시 및 시간 기준 절대 원칙]\n"
+        f"- 현재 실제 일시: {now_str} (기준 연도: {current_year}년)\n"
+        f"- 사전 학습 데이터 마감(2024~2025년)과 상관없이, 현재 현실 세계의 실제 연도는 {current_year}년입니다.\n"
+        f"- 사용자가 '올해', '최근', '최신 동향', '뉴스', '현재 상황' 등을 질문하거나 정보를 요약할 때 절대 과거(2024년, 2025년)를 현재로 착각하지 말고 반드시 {current_year}년을 기준으로 사고하고 답변하세요.\n"
+        f"- 제공된 웹 검색 결과를 최우선으로 분석하여 한국어로 알기 쉽게 정리해 주세요.\n"
         f"- 검색 결과에 날짜나 구체적인 수치가 있다면 그대로 정확하게 반영하세요."
     )
 
@@ -948,11 +916,10 @@ def main():
             options={'temperature': 0.4},
             keep_alive=0
         )
-        print("[0;32m🤖 [로컬 AI 답변]:[0m
-")
+        print("\033[0;32m🤖 [로컬 AI 답변]:\033[0m\n")
         print(response['message']['content'])
     except Exception as e:
-        print(f"[0;31m❌ Ollama 실행 오류: {e}[0m")
+        print(f"\033[0;31m❌ Ollama 실행 오류: {e}\033[0m")
         print("💡 팁: 'sudo systemctl restart ollama.service' 로 Ollama 서비스가 켜져 있는지 확인하세요.")
 
 if __name__ == '__main__':
@@ -1004,7 +971,7 @@ def collect_system_metrics():
     metrics["kernel"] = run_cmd("uname -r")
 
     # 2. CPU 로드 및 온도
-    metrics["cpu_model"] = run_cmd("lscpu | grep 'Model name' | sed 's/Model name:[ 	]*//'")
+    metrics["cpu_model"] = run_cmd("lscpu | grep 'Model name' | sed 's/Model name:[ \t]*//'")
     metrics["cpu_temp"] = run_cmd("sensors 2>/dev/null | grep -E '(Tctl|Package id 0|Tccd1):' | head -n 2")
     if not metrics["cpu_temp"] or metrics["cpu_temp"] == "정보 없음":
         metrics["cpu_temp"] = run_cmd("cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -n 1 | awk '{print $1/1000 \"°C\"}'")
@@ -1015,12 +982,9 @@ def collect_system_metrics():
         parts = [p.strip() for p in gpu_raw.split(",")]
         if len(parts) >= 7:
             metrics["gpu_info"] = (
-                f"모델: {parts[0]}
-"
-                f"온도: {parts[1]}°C | GPU 사용률: {parts[2]}% | 메모리 I/O: {parts[3]}%
-"
-                f"VRAM 점유율: {parts[4]}MB / {parts[5]}MB (사용률: {round(float(parts[4])/float(parts[5])*100, 1)}%)
-"
+                f"모델: {parts[0]}\n"
+                f"온도: {parts[1]}°C | GPU 사용률: {parts[2]}% | 메모리 I/O: {parts[3]}%\n"
+                f"VRAM 점유율: {parts[4]}MB / {parts[5]}MB (사용률: {round(float(parts[4])/float(parts[5])*100, 1)}%)\n"
                 f"소비 전력: {parts[6]}W"
             )
         else:
@@ -1047,7 +1011,7 @@ def collect_system_metrics():
 def main():
     user_query = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "현재 시스템 전체 상태를 종합 진단하고 이상 유무와 개선점을 분석해줘."
 
-    print("[0;34m🔍 [Arch Linux & RTX 5070 Ti 실시간 하드웨어/OS 점검 중...][0m")
+    print("\033[0;34m🔍 [Arch Linux & RTX 5070 Ti 실시간 하드웨어/OS 점검 중...]\033[0m")
     metrics = collect_system_metrics()
 
     raw_data = f"""[호스트 환경]
@@ -1070,11 +1034,8 @@ def main():
 [최근 주요 시스템 로그]
 {metrics['recent_errors']}"""
 
-    print("[0;32m✓ 하드웨어 센서 및 시스템 메트릭 수집 완료[0m
-")
-    print(f"[0;36m📋 [실시간 수집된 주요 수치 요약][0m
-{metrics['gpu_info']}
-")
+    print("\033[0;32m✓ 하드웨어 센서 및 시스템 메트릭 수집 완료\033[0m\n")
+    print(f"\033[0;36m📋 [실시간 수집된 주요 수치 요약]\033[0m\n{metrics['gpu_info']}\n")
 
     now_str = subprocess.getoutput("date '+%Y년 %m월 %d일 (%a) %H:%M:%S' 2>/dev/null") or "2026년"
     current_year = subprocess.getoutput("date '+%Y' 2>/dev/null") or "2026"
@@ -1082,14 +1043,10 @@ def main():
     system_prompt = (
         f"당신은 Arch Linux 및 초고사양 하드웨어(Ryzen 9800X3D + RTX 5070 Ti) 전문 시스템 엔지니어 AI입니다. "
         f"[실시간 현재 일시: {now_str} (기준 연도: {current_year}년)] "
-        f"제공된 실시간 시스템 메트릭 데이터를 기반으로 사용자의 PC 상태를 정밀하게 진단하세요.
-"
-        f"1. 종합 판정: [정상 🟢 / 주의 🟡 / 위험 🔴] 3단계로 명확히 판정하세요.
-"
-        f"2. CPU/GPU 온도, VRAM/RAM 점유율, 전력 소비, systemd 데몬 상태를 항목별로 평가하세요.
-"
-        f"3. 만약 이상 징후(과열, VRAM 누수, 실패한 서비스)가 발견되면 즉시 실행할 수 있는 리눅스 조치 명령어를 제시하세요.
-"
+        f"제공된 실시간 시스템 메트릭 데이터를 기반으로 사용자의 PC 상태를 정밀하게 진단하세요.\n\n"
+        f"1. 종합 판정: [정상 🟢 / 주의 🟡 / 위험 🔴] 3단계로 명확히 판정하세요.\n"
+        f"2. CPU/GPU 온도, VRAM/RAM 점유율, 전력 소비, systemd 데몬 상태를 항목별로 평가하세요.\n"
+        f"3. 만약 이상 징후(과열, VRAM 누수, 실패한 서비스)가 발견되면 즉시 실행할 수 있는 리눅스 조치 명령어를 제시하세요.\n"
         f"4. 답변은 품격 있고 명확한 한국어로 작성하세요."
     )
 
@@ -1125,11 +1082,10 @@ def main():
             options={'temperature': 0.4},
             keep_alive=0
         )
-        print("[0;32m🤖 [로컬 AI 실시간 시스템 종합 진단 리포트]:[0m
-")
+        print("\033[0;32m🤖 [로컬 AI 실시간 시스템 종합 진단 리포트]:\033[0m\n")
         print(response['message']['content'])
     except Exception as e:
-        print(f"[0;31m❌ Ollama 진단 실행 오류: {e}[0m")
+        print(f"\033[0;31m❌ Ollama 진단 실행 오류: {e}\033[0m")
         print("💡 팁: 'sudo systemctl restart ollama.service' 로 Ollama 서비스가 켜져 있는지 확인하세요.")
 
 if __name__ == '__main__':
