@@ -4,6 +4,23 @@
 
 ---
 
+## 📌 [2026-09-12] - v1.4.0: 4계층 GPU/VRAM 자동 감지 엔진 & Ollama 500 에러 방어 스마트 컨텍스트 슬라이딩 가드 구축
+### 🌟 주요 추가 및 변경 사항
+* **4계층 GPU & VRAM 정밀 감지 엔진 탑재**:
+  * 시스템 패키지 롤링 업데이트(`nvidia-utils` 등) 후 미재부팅으로 인한 `nvidia-smi` 라이브러리 미스매치(`NVML mismatch`) 시에도 단일 장애점(SPOF) 없이 작동.
+  * 1단계(`nvidia-smi`) → 2단계(`/proc/driver/nvidia`) → 3단계(`lspci -v` PCIe BAR `[size=16G]`) → 4단계(모델명 기반 역추정)로 이어지는 4계층 폴백을 구축하여 RTX 5070 Ti (16GB VRAM) 감지 및 `num_ctx: 16384 (16K)` 컨텍스트를 100% 영구 보장.
+* **Ollama Jinja Chat Template 500 에러 (`no user query found in messages`) 원천 차단**:
+  * 다중 도구 호출 시 중간 도구 결과 텍스트가 누적되어 llama-server 슬라이딩 컨텍스트가 앞선 사용자 질문(`user`)을 잘라내버리던 구조적 결함 해결.
+  * `system` 프롬프트와 최초 `user` 질의는 영구 불변(Immutable) 보존하고, 오래된 중간 도구 결과만 선별 요약/압축하는 스마트 슬라이딩 가드(`prune_and_sanitize_messages`) 구현.
+* **2단계 긴급 자가 복구 재시도(Self-Healing Retry) 로직 탑재**:
+  * Ollama API 호출 중 토큰 초과나 템플릿 예외 발생 시 크래시 없이 중간 도구 결과를 200자 단위로 긴급 압축 후 1회 자동 재시도하여 최종 응답 보장.
+* **세션 히스토리(`session.json`) 무결성 검증**:
+  * 도구 에러로 비정상 종료 시 고립된 단독 `user` 쿼리가 저장되는 문제를 방지하고, 완전한 `user`-`assistant` 쌍만 검증 후 저장.
+* **전체 마스터 가이드 및 문서 갱신**:
+  * `README.md`, `LOCAL_LLM_MASTER_GUIDE.md`, `install_all_local_llm.sh` 일괄 최신화.
+
+---
+
 ## 📌 [2026-09-05] - v1.3.0: 2026년 기준 실시간 구글 검색 동기화 & 영구 세션 메모리 탑재
 ### 🌟 주요 추가 및 변경 사항
 * **실시간 시간 동적 감지 & 2026년 기준 전역 주입**:

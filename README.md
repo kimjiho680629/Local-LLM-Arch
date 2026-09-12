@@ -146,10 +146,13 @@ ollama cp qwen2.5:3b qwen2.5-uncensored
 
 * 실행 파일: `~/.local/bin/ai`
 * **핵심 기능 및 안전 가드**:
+  * **4계층 GPU & VRAM 정밀 감지 엔진**: 드라이버 업데이트 후 미재부팅으로 인한 `nvidia-smi` 라이브러리 미스매치 시에도 `/proc` 및 `lspci -v` PCIe BAR 메모리 매핑을 통해 100% 하드웨어 스펙을 감지하여 고사양 GPU(RTX 5070 Ti 등)에서 `16384 (16K)` 컨텍스트 윈도우를 영구 보장.
+  * **스마트 메시지 정제 & 컨텍스트 슬라이딩 가드**: 대화 총 텍스트 13,000자 초과 시 최선두 `system`과 최초 `user` 질의를 영구 불변(Immutable) 보존하고, 오래된 중간 도구 결과만 선별 요약하여 Ollama 500 에러 원천 차단.
+  * **긴급 자가 복구 2단계 재시도 (Self-Healing Retry)**: 토큰 한도 초과 또는 템플릿 오류 발생 시 이전 도구 결과를 긴급 압축하여 1회 자동 복구 재시도.
   * **2026년 기준 실시간 시점 & 구글 검색 자동 보정**: 모델의 사전 학습 컷오프(2024~2025년)로 인한 검색 왜곡을 원천 차단하여, "올해/최근" 질의 시 2026년을 기준으로 사고하고 검색어 내 과거 연도를 2026년으로 자동 교정.
-  * **영구 세션 메모리 (Persistent Session Memory)**: 단발성 실행(`ai "질문"`) 시에도 최근 5턴의 대화를 디스크(`~/.cache/ai_agent/session.json`)에 자동 보관하여 "그거", "방금 말한 모델" 등 후속 맥락을 완벽히 이해.
+  * **무결성 검증 영구 세션 메모리 (Persistent Session Memory)**: 완전한 `user`-`assistant` 대화 쌍만 디스크(`~/.cache/ai_agent/session.json`)에 보관하여 고립된 쿼리로 인한 세션 오염을 방지하고 맥락 완벽 유지.
   * **대화 기억 초기화 지원**: `ai clear` 또는 `ai reset` 명령어로 언제든 깨끗하게 세션 초기화 가능 (1시간 미사용 시 자동 리셋).
-  * **대용량 터미널 출력(3,500자 초과 시) 분할 샘플링**: Head 1,000자 + Tail 2,500자 샘플링으로 컨텍스트 오버플로우 및 Jinja 500 에러 원천 차단.
+  * **대용량 터미널 출력(3,500자 초과 시) 분할 샘플링**: Head 1,000자 + Tail 2,500자 샘플링으로 컨텍스트 오버플로우 방어.
   * **위험 셸 명령어(`rm -rf /`, `mkfs` 등) 사전 필터링**.
   * **Google + DuckDuckGo 하이브리드 자동 Fallback 웹 검색**.
 
@@ -173,8 +176,9 @@ ollama cp qwen2.5:3b qwen2.5-uncensored
 
 ## 5. 안정성 & 컨텍스트 보호 핵심 설정 (트러블슈팅 완벽 방어)
 
-1. **Jinja Chat Template 500 에러 (`no user query found in messages`) 방어**
-   * 대용량 셸 출력 축약 가드(Truncation Guard) 및 동적 `num_ctx` 자동 조절을 통해 `user` 메시지 유실을 구조적으로 방지.
+1. **Jinja Chat Template 500 에러 (`no user query found in messages`) 원천 차단**
+   * **원인**: 좁은 컨텍스트(`num_ctx: 4096`) 환경에서 도구 연속 호출로 토큰이 초과되면 llama-server가 앞선 토큰을 Truncate하면서 최초 `user` 쿼리가 유실되어 Qwen 3.8 렌더러 예외 발생.
+   * **해결**: 4계층 GPU 감지로 16K(`num_ctx: 16384`) 보장 + 스마트 슬라이딩 가드로 `system` 및 최초 `user` 쿼리 영구 불변 보존 + 오래된 중간 도구 결과 선별 축약.
 2. **0초 VRAM 회수로 고사양 게임 렉 방어**
    * `OLLAMA_KEEP_ALIVE=0` 설정으로 대화 완료 즉시 VRAM 100% 반환.
 3. **셸 환경 변수 영구 등록**

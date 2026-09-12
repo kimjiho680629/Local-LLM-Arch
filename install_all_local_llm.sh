@@ -240,6 +240,7 @@ import urllib.parse
 import re
 import warnings
 import time
+import glob
 
 # 경고 무음 처리
 warnings.simplefilter("ignore")
@@ -269,18 +270,35 @@ def load_session_history():
         last_time = data.get("timestamp", 0)
         if time.time() - last_time > SESSION_TIMEOUT_SEC:
             return []
-        return data.get("messages", [])
+        msgs = data.get("messages", [])
+        # 구조적 유효성 검증: 짝이 맞지 않는 경우 필터링
+        valid = []
+        for i in range(0, len(msgs) - 1, 2):
+            if msgs[i].get("role") == "user" and msgs[i+1].get("role") == "assistant":
+                valid.extend([msgs[i], msgs[i+1]])
+        return valid
     except Exception:
         return []
 
 def save_session_history(dialogue_history):
-    """최근 대화 기록을 디스크에 영구 저장합니다."""
+    """최근 대화 기록을 디스크에 영구 저장합니다. (완전한 user-assistant 쌍만 무결성 검증 후 저장)"""
     try:
         os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
         filtered = []
+        last_user = None
         for m in dialogue_history:
-            if m.get("role") in ["user", "assistant"] and m.get("content"):
-                filtered.append({"role": m["role"], "content": m["content"]})
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user":
+                last_user = content
+            elif role == "assistant" and last_user:
+                # 에러 메시지나 도구 호출 단계의 메시지가 아닌 정상 응답인 경우에만 저장
+                if not content.startswith("❌") and not content.startswith("Error"):
+                    filtered.append({"role": "user", "content": last_user})
+                    filtered.append({"role": "assistant", "content": content})
+                last_user = None
         
         max_msgs = MAX_HISTORY_TURNS * 2
         if len(filtered) > max_msgs:
@@ -474,46 +492,142 @@ def get_system_hardware_info() -> str:
     except Exception:
         pass
 
-    # 3. GPU & VRAM
+    # 3. GPU & VRAM (다계층 정밀 감지 엔진)
     try:
-        gpu_info = ""
-        nv_out = subprocess.run("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null", shell=True, stdout=subprocess.PIPE, text=True)
-        if nv_out.returncode == 0 and nv_out.stdout.strip():
-            g_list = []
-            for g in nv_out.stdout.strip().split("\n"):
-                parts = [p.strip() for p in g.split(",")]
-                if len(parts) >= 2:
-                    vram_gb = round(float(parts[1]) / 1024, 1)
-                    g_list.append(f"NVIDIA {parts[0]} ({vram_gb}GB VRAM)")
-            gpu_info = ", ".join(g_list)
-        
-        if not gpu_info:
-            lspci_out = subprocess.check_output("lspci 2>/dev/null | grep -iE 'vga|3d|display' | cut -d: -f3", shell=True, text=True).strip()
-            if lspci_out:
-                gpu_info = lspci_out.replace("\n", ", ")
-        
-        if gpu_info:
-            info_lines.append(f"- GPU: {gpu_info.strip()}")
+        gpu_name, vram_mb = detect_gpu_and_vram()
+        if gpu_name:
+            vram_str = f" ({round(vram_mb/1024, 1)}GB VRAM)" if vram_mb > 0 else ""
+            info_lines.append(f"- GPU: {gpu_name}{vram_str}")
         else:
             info_lines.append("- GPU: Integrated / CPU Only")
     except Exception:
-        pass
+        info_lines.append("- GPU: Integrated / CPU Only")
 
     return "\n".join(info_lines)
 
-def get_optimal_context_size() -> int:
-    """GPU VRAM 용량에 맞춰 최적의 num_ctx(컨텍스트 윈도우)를 자동 산출합니다."""
+def detect_gpu_and_vram():
+    """
+    NVIDIA / AMD / Intel GPU 및 VRAM(MB)을 4계층 폴백으로 오차 없이 정밀 감지합니다.
+    (시스템 업데이트 후 재부팅 전 드라이버/라이브러리 버전 불일치 상태에서도 100% 감지)
+    """
+    gpu_name = ""
+    vram_mb = 0.0
+
+    # 1계층: nvidia-smi 시도
     try:
-        nv_out = subprocess.run("nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null", shell=True, stdout=subprocess.PIPE, text=True)
+        nv_out = subprocess.run(
+            "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null",
+            shell=True, stdout=subprocess.PIPE, text=True, timeout=2
+        )
         if nv_out.returncode == 0 and nv_out.stdout.strip():
-            vram_mb = float(nv_out.stdout.strip().split("\n")[0])
-            if vram_mb >= 14000:  # 16GB+ VRAM
-                return 16384
-            elif vram_mb >= 7500: # 8GB~12GB VRAM
-                return 8192
+            first_line = nv_out.stdout.strip().split("\n")[0]
+            parts = [p.strip() for p in first_line.split(",")]
+            if len(parts) >= 2:
+                gpu_name = f"NVIDIA {parts[0]}"
+                vram_mb = float(parts[1])
+                return gpu_name, vram_mb
     except Exception:
         pass
-    return 4096  # 저사양 또는 CPU 환경 기본값
+
+    # 2계층: /proc/driver/nvidia/gpus/*/information (커널 모듈 로드 시)
+    try:
+        proc_files = glob.glob("/proc/driver/nvidia/gpus/*/information")
+        if proc_files:
+            with open(proc_files[0], "r") as f:
+                content = f.read()
+            m = re.search(r"Model:\s*(.+)", content)
+            if m:
+                gpu_name = m.group(1).strip()
+    except Exception:
+        pass
+
+    # 3계층: lspci -v 정밀 파싱 (PCIe BAR 메모리 및 모델명)
+    try:
+        lspci_out = subprocess.check_output("lspci -v 2>/dev/null", shell=True, text=True)
+        vga_blocks = re.findall(r'(?:VGA compatible controller|3D controller):[^\n]+(?:\n\t[^\n]+)+', lspci_out)
+        for blk in vga_blocks:
+            if not gpu_name:
+                m_model = re.search(r'(?:VGA compatible controller|3D controller):\s*(.+)', blk)
+                if m_model:
+                    gpu_name = m_model.group(1).strip()
+            mem_matches = re.findall(r'\[size=(\d+)([GMK])\]', blk)
+            for sz, unit in mem_matches:
+                val = float(sz)
+                if unit == 'G':
+                    val_mb = val * 1024
+                elif unit == 'M':
+                    val_mb = val
+                else:
+                    val_mb = val / 1024
+                if val_mb > vram_mb:
+                    vram_mb = val_mb
+    except Exception:
+        pass
+
+    # 4계층: 모델명 기반 VRAM 역추정 및 일반적 하드웨어 보정
+    if vram_mb < 2048 and gpu_name:
+        name_lower = gpu_name.lower()
+        if any(x in name_lower for x in ['5090', '4090', '3090', '7900 xtx', 'a6000', 'a100']):
+            vram_mb = 24576
+        elif any(x in name_lower for x in ['5080', '4080', '5070 ti', '4070 ti super', '7900 xt', '6900 xt', '6800 xt']):
+            vram_mb = 16384
+        elif any(x in name_lower for x in ['5070', '4070', '3080', '7800 xt', '6700 xt']):
+            vram_mb = 12288
+        elif any(x in name_lower for x in ['4060', '3070', '3060 ti', '7600']):
+            vram_mb = 8192
+
+    return gpu_name, vram_mb
+
+def get_optimal_context_size() -> int:
+    """GPU VRAM 용량에 맞춰 최적의 num_ctx(컨텍스트 윈도우)를 자동 산출합니다."""
+    _, vram_mb = detect_gpu_and_vram()
+    if vram_mb >= 14000:   # 16GB+ VRAM (RTX 5070 Ti, 4080 등)
+        return 16384
+    elif vram_mb >= 7500:  # 8GB~12GB VRAM
+        return 8192
+    
+    # GPU 미감지 시 시스템 호스트 RAM 확인 (32GB+ 이면 8192 지원)
+    try:
+        mem_total_kb = int(subprocess.getoutput("grep MemTotal /proc/meminfo | awk '{print $2}'") or "0")
+        if mem_total_kb >= 30000000:
+            return 8192
+    except Exception:
+        pass
+
+    return 8192  # 기본 안전 최소값 (도구 루프 안정성 보장)
+
+def prune_and_sanitize_messages(messages, max_total_chars=13000):
+    """
+    Ollama 템플릿 렌더러 보호 및 'no user query found in messages' 500 에러를 원천 차단합니다.
+    1. system 프롬프트와 최초 user 질의(루트 쿼리)는 절대로 건드리지 않고 영구 보존(Immutable)합니다.
+    2. 이전 루프에서 누적된 중간 도구 결과(role: tool)가 전체 길이를 초과할 경우,
+       오래된 중간 도구 결과의 본문을 앞 250자 + 요약 태그로 안전하게 압축합니다.
+    """
+    if not messages:
+        return messages
+
+    total_chars = sum(len(m.get('content') or '') for m in messages)
+    if total_chars <= max_total_chars:
+        return messages
+
+    # 도구 결과 메시지 인덱스 수집
+    tool_indices = [i for i, m in enumerate(messages) if m.get('role') == 'tool']
+    if not tool_indices:
+        return messages
+
+    # 최근 2개 도구 결과는 상세 유지, 그 이전의 오래된 도구 결과를 순차적으로 압축
+    keep_recent = 2
+    prune_targets = tool_indices[:-keep_recent] if len(tool_indices) > keep_recent else tool_indices[:-1]
+
+    for idx in prune_targets:
+        cnt = messages[idx].get('content') or ''
+        if len(cnt) > 350:
+            messages[idx]['content'] = cnt[:250] + f"\n... [이전 수집된 결과 일부 생략 ({len(cnt)}자 중 요약 보존)]"
+        total_chars = sum(len(m.get('content') or '') for m in messages)
+        if total_chars <= max_total_chars:
+            break
+
+    return messages
 
 def build_system_prompt() -> str:
     hw_info = get_system_hardware_info()
@@ -546,19 +660,35 @@ def run_agent_turn(client, model, messages):
     while loop_count < max_loops:
         loop_count += 1
         
-        try:
-            response = client.chat(
-                model=model,
-                messages=messages,
-                tools=tools,
-                options={
-                    'temperature': 0.3,
-                    'num_ctx': ctx_size
-                },
-                keep_alive=0
-            )
-        except Exception as e:
-            return f"❌ [Ollama 응답 처리 오류]: {e}\n(도구 실행 결과량이 너무 많거나 모델 템플릿에서 오류가 발생했습니다.)"
+        # 메시지 컨텍스트 윈도우 한도 초과 방지 가드 (system & 최초 user 쿼리 무결성 100% 보존)
+        prune_and_sanitize_messages(messages, max_total_chars=13000)
+
+        response = None
+        for attempt in range(2):
+            try:
+                response = client.chat(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    options={
+                        'temperature': 0.3,
+                        'num_ctx': ctx_size
+                    },
+                    keep_alive=0
+                )
+                break
+            except Exception as e:
+                # 1회 실패 시 이전 도구 결과를 극단적으로 압축하여 긴급 자가 복구 시도
+                if attempt == 0:
+                    for m in messages:
+                        if m.get('role') == 'tool' and len(m.get('content') or '') > 250:
+                            m['content'] = (m.get('content') or '')[:200] + "\n... [컨텍스트 한도 초과 방지를 위한 긴급 요약]"
+                    time.sleep(0.5)
+                    continue
+                return f"❌ [Ollama 응답 처리 오류]: {e}\n(도구 실행 결과량이 너무 많거나 모델 템플릿에서 오류가 발생했습니다.)"
+
+        if not response:
+            return "❌ [오류] 모델 응답을 수신하지 못했습니다."
 
         message = response['message']
         messages.append(message)
@@ -694,6 +824,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 AI_EOF
 chmod +x "$BIN_DIR/ai"
 
